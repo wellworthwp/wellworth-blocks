@@ -1,0 +1,60 @@
+# wellworth-theme — progress.md gate (PLAN T006; SPECS §31.5, §31.5.1).
+#
+# Phase 0/1 stopgap (current):
+#   - The umbrella `wellworth/misc/progress.md` is the source of truth,
+#     but the umbrella is NOT a git repo, so this workflow cannot fetch
+#     it from a sibling clone. Until the umbrella's mirror repo
+#     (`wellworthwp/wellworth-progress`) or the meta-repo
+#     (`wellworthwp/.github`) exists, this gate operates by label:
+#       * PR must carry the label `progress-updated`  OR
+#       * PR title must start with `[no-progress]` (whitelisted: docs,
+#         dependabot, chore-only refactors per RULES §12).
+#
+# Post-meta-repo refactor (T006 follow-up):
+#   - Swap this workflow to call
+#     `wellworthwp/.github/.github/actions/progress-check@v1`, which
+#     fetches the umbrella file and diffs PR-lifetime modifications.
+#
+# Post-split (end of Phase 1):
+#   - This repo grows its own progress.md and the gate checks the
+#     local file (per SPECS §31.5.1 "Post-split").
+
+name: progress-check
+
+on:
+  pull_request:
+    types: [opened, edited, labeled, unlabeled, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  gate:
+    name: progress.md gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify label or whitelisted title prefix
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          echo "Title: $PR_TITLE"
+          echo "Labels: $PR_LABELS"
+
+          if printf '%s' "$PR_LABELS" | jq -e 'index("progress-updated")' >/dev/null 2>&1; then
+            echo "::notice::progress-updated label present — gate passes."
+            exit 0
+          fi
+
+          # Title prefix whitelist
+          case "$PR_TITLE" in
+            "[no-progress]"*)
+              echo "::notice::[no-progress] prefix present — gate passes."
+              exit 0
+              ;;
+          esac
+
+          echo "::error::PR must update wellworth/misc/progress.md and carry the 'progress-updated' label, OR start its title with [no-progress] for docs/dependabot/chore-only changes (RULES §12, SPECS §31.5)."
+          exit 1
