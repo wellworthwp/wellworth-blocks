@@ -55,7 +55,7 @@ jobs:
             jq '.results' /tmp/secrets.json
             exit 1
           fi
-          echo "detect-secrets: clean"
+          echo "detect-secrets scan clean - no findings"
 
   codeql:
     name: CodeQL (javascript-typescript)
