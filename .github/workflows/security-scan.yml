@@ -1,0 +1,103 @@
+# wellworth-theme — Security scans (PLAN T006 §B; SPECS §19, §22).
+#
+# Layers:
+#   - CodeQL: source-code static analysis. Conditional on package.json
+#     existing (T036 wires that in).
+#   - detect-secrets: every PR + every push to main.
+#   - Snyk: enabled when the repo variable `HAS_SNYK` is set to 'true'
+#     (and SNYK_TOKEN secret is configured). Founder flips this when
+#     the Snyk org is provisioned.
+#   - OWASP ZAP weekly: enabled when STAGING_URL secret is set
+#     (T009 marketing host provisioning).
+#
+# Dependabot is configured separately in .github/dependabot.yml.
+
+name: security-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  detect-secrets:
+    name: detect-secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install detect-secrets
+        run: pip install --quiet detect-secrets==1.5.0
+      - name: Scan the full tree
+        run: |
+          detect-secrets scan \
+            --exclude-files '\.lock$|package-lock\.json|pnpm-lock\.yaml' \
+            > /tmp/secrets.json
+          if [ -s /tmp/secrets.json ] \
+             && [ "$(jq -r '.results | length' /tmp/secrets.json)" != "0" ]; then
+            echo "::error::Potential secrets detected:"
+            jq '.results' /tmp/secrets.json
+            exit 1
+          fi
+          echo "detect-secrets: clean"
+
+  codeql:
+    name: CodeQL (javascript-typescript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No package.json — CodeQL javascript-typescript job has nothing to analyse yet (activates when T036/T038 lands JS sources)."
+          fi
+      - if: steps.detect.outputs.run == 'true'
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - if: steps.detect.outputs.run == 'true'
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+
+  snyk:
+    name: Snyk (vulnerability scan)
+    runs-on: ubuntu-latest
+    if: vars.HAS_SNYK == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+  zap-weekly:
+    name: OWASP ZAP (weekly, staging)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && vars.HAS_STAGING == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ secrets.STAGING_URL }}
