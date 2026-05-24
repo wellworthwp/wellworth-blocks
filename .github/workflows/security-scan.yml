@@ -98,6 +98,6 @@ jobs:
     if: github.event_name == 'schedule' && vars.HAS_STAGING == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: zaproxy/action-baseline@v0.12.0
+      - uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ secrets.STAGING_URL }}
